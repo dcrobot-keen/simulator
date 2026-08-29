@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>2D simulator viewer</title>
+<style>
+  body { font-family: ui-monospace, monospace; background: #111; color: #ddd; margin: 0; }
+  #wrap { display: flex; gap: 16px; padding: 16px; }
+  canvas { background: #1a1a1a; border: 1px solid #333; }
+  #side { font-size: 13px; line-height: 1.6; max-width: 320px; }
+  .k { color: #888; }
+  b { color: #6cf; }
+  .on { color: #2a7d2a; } .off { color: #a33; }
+  code { background: #000; padding: 1px 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="720" height="540"></canvas>
+  <div id="side">
+    <h3 style="margin:0 0 8px">2D simulator</h3>
+    <div>roboteq <span id="rs" class="off">…</span> · sensors <span id="ss" class="off">…</span></div>
+    <div class="k">world</div><div id="world">–</div>
+    <div class="k">ground-truth pose</div><div id="pose">–</div>
+    <div id="coll"></div>
+    <hr style="border-color:#333" />
+    <div class="k">drive</div>
+    <div><code>W/S</code> or <code>↑/↓</code> forward/back</div>
+    <div><code>A/D</code> or <code>←/→</code> turn</div>
+    <div><code>Space</code> E-STOP (<code>!EX</code>) · <code>R</code> re-enable (<code>!MG</code>)</div>
+    <div class="k" style="margin-top:8px">last !G</div><div id="cmd">0 / 0</div>
+    <p style="color:#888">
+      Run the sim first: <code>cd simulator &amp;&amp; npm start</code>.
+      This page speaks the same Roboteq protocol as the real dashboard — it's
+      just a minimal world view for the weekend check.
+    </p>
+  </div>
+</div>
+
+<script>
+const ROBOTEQ_URL = 'ws://127.0.0.1:8765';
+const SENSOR_URL  = 'ws://127.0.0.1:8766';
+
+const cv = document.getElementById('c');
+const g = cv.getContext('2d');
+const $ = (id) => document.getElementById(id);
+
+let world = null;       // {name, bounds:[w,h], segments:[{x1,y1,x2,y2}]}
+let lidarSpec = null;
+let latest = null;      // last sensor frame {groundTruth, collided, scan}
+
+// ---- sensor stream --------------------------------------------------------
+let sbuf = '';
+function connectSensors() {
+  const ws = new WebSocket(SENSOR_URL);
+  ws.onopen = () => { $('ss').textContent = 'connected'; $('ss').className = 'on'; };
+  ws.onclose = () => { $('ss').textContent = 'disconnected'; $('ss').className = 'off'; setTimeout(connectSensors, 1000); };
+  ws.onmessage = (e) => {
+    sbuf += e.data;
+    let nl;
+    while ((nl = sbuf.indexOf('\n')) !== -1) {
+      const line = sbuf.slice(0, nl); sbuf = sbuf.slice(nl + 1);
+      if (!line.trim()) continue;
+      const m = JSON.parse(line);
+      if (m.type === 'hello') {
+        world = m.world; lidarSpec = m.lidar;
+        $('world').textContent = `${world.name} · ${world.bounds[0]}×${world.bounds[1]} m`;
+      } else if (m.type === 'frame') {
+        latest = m;
+        const p = m.groundTruth;
+        $('pose').textContent = `x=${p.x.toFixed(2)}  y=${p.y.toFixed(2)}  θ=${(p.theta * 180 / Math.PI).toFixed(0)}°`;
+        $('coll').innerHTML = m.collided ? '<span class="off">● touching a wall</span>' : '';
+      }
+    }
+  };
+}
+
+// ---- roboteq control ----------------------------------------------------
+let roboteq = null;
+const keys = new Set();
+let lastCmd = [0, 0];
+
+function connectRoboteq() {
+  const ws = new WebSocket(ROBOTEQ_URL);
+  roboteq = ws;
+  ws.onopen = () => {
+    $('rs').textContent = 'connected'; $('rs').className = 'on';
+    ws.send('^ECHOF 1\r');
+    ws.send('!MG\r');
+  };
+  ws.onclose = () => { $('rs').textContent = 'disconnected'; $('rs').className = 'off'; roboteq = null; setTimeout(connectRoboteq, 1000); };
+  ws.onmessage = () => {};
+}
+
+addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+  if (k === ' ') { roboteq && roboteq.send('!EX\r'); return; }
+  if (k === 'r') { roboteq && roboteq.send('!MG\r'); return; }
+  keys.add(k);
+});
+addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+
+// 20 Hz control tick — arcade mix -> !G, and doubles as the keepalive that
+// keeps the sim's RWD watchdog happy.
+setInterval(() => {
+  if (!roboteq || roboteq.readyState !== 1) return;
+  const fwd = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0);
+  const turn = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+  const L = Math.max(-1000, Math.min(1000, Math.round((fwd + turn * 0.6) * 1000)));
+  const R = Math.max(-1000, Math.min(1000, Math.round((fwd - turn * 0.6) * 1000)));
+  roboteq.send(`!G 1 ${L}_!G 2 ${R}\r`);
+  if (L !== lastCmd[0] || R !== lastCmd[1]) { lastCmd = [L, R]; $('cmd').textContent = `${L} / ${R}`; }
+}, 50);
+
+// ---- draw -----------------------------------------------------------
+function draw() {
+  requestAnimationFrame(draw);
+  g.clearRect(0, 0, cv.width, cv.height);
+  if (!world) return;
+
+  const [W, H] = world.bounds;
+  const pad = 20;
+  const s = Math.min((cv.width - 2 * pad) / W, (cv.height - 2 * pad) / H);
+  const X = (mx) => pad + mx * s;
+  const Y = (my) => cv.height - pad - my * s; // flip so +y is up
+
+  // walls
+  g.strokeStyle = '#5a5a5a'; g.lineWidth = 2;
+  for (const seg of world.segments) {
+    g.beginPath(); g.moveTo(X(seg.x1), Y(seg.y1)); g.lineTo(X(seg.x2), Y(seg.y2)); g.stroke();
+  }
+
+  if (!latest) return;
+  const p = latest.groundTruth;
+
+  // laser
+  const sc = latest.scan;
+  g.fillStyle = 'rgba(120,200,255,0.5)';
+  for (let i = 0; i < sc.ranges.length; i++) {
+    const r = sc.ranges[i];
+    if (r >= sc.rangeMax - 1e-6) continue;
+    const a = p.theta + sc.angleMin + i * sc.angleIncrement;
+    const hx = p.x + r * Math.cos(a), hy = p.y + r * Math.sin(a);
+    g.fillRect(X(hx) - 1.5, Y(hy) - 1.5, 3, 3);
+  }
+
+  // robot
+  const rr = 0.11 * s;
+  g.beginPath(); g.arc(X(p.x), Y(p.y), rr, 0, 2 * Math.PI);
+  g.fillStyle = latest.collided ? '#a33' : '#6cf'; g.fill();
+  g.strokeStyle = '#fff'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(X(p.x), Y(p.y));
+  g.lineTo(X(p.x + 0.18 * Math.cos(p.theta)), Y(p.y + 0.18 * Math.sin(p.theta)));
+  g.stroke();
+}
+
+connectSensors();
+connectRoboteq();
+draw();
+</script>
+</body>
+</html>
