@@ -2,13 +2,15 @@
 // rest of the sim needs against them — a ray cast (for the LIDAR) and a
 // circle overlap test (for robot collision). No dynamics, no 3D.
 //
-// A world file is JSON: { name, bounds:[w,h], walls:[[x1,y1,x2,y2], ...] }.
-// The outer bounds are added as four walls automatically.
+// A world file is JSON: { name, bounds:[w,h], walls:[[x1,y1,x2,y2], ...],
+// start:[x,y,theta] }. The outer bounds are added as four walls
+// automatically; `start` is a default spawn pose (SIM_START overrides it).
 
 export class World {
-  constructor({ name = 'world', bounds = [10, 10], walls = [] } = {}) {
+  constructor({ name = 'world', bounds = [10, 10], walls = [], start = null } = {}) {
     this.name = name;
     this.bounds = bounds;
+    this.start = start && { x: start[0], y: start[1], theta: start[2] ?? 0 };
     const [w, h] = bounds;
     // segments as {x1,y1,x2,y2}; origin at a corner, +x right, +y up
     this.segments = [

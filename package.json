@@ -6,7 +6,7 @@
   "description": "Lightweight 2D world simulator. Stands in for a real robot: a differential-drive body (TurtleBot3 Burger sized) in a 2D world, speaking the same Roboteq ASCII protocol as robot-base/sim on :8765 (so robot-os-chromium's stack connects unchanged) plus a JSON sensor stream (ground-truth pose + raycast LIDAR) on :8766 for the nav layer (roadmap.md Phase 7). No deps beyond ws; no ROS, no Gazebo.",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node test/sim-smoke.mjs"
+    "test": "node test/sim-smoke.mjs && node test/noise-smoke.mjs"
   },
   "dependencies": {
     "ws": "^8.21.3"

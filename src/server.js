@@ -18,6 +18,7 @@ import { WebSocketServer } from 'ws';
 import { encodeCommand, RoboteqDecoder } from './roboteq.js';
 import { Robot, TB3 } from './robot.js';
 import { scan, LDS01 } from './lidar.js';
+import { makeRng } from './noise.js';
 
 export function startSimulator({
   world,
@@ -28,9 +29,12 @@ export function startSimulator({
   tickHz = 50,
   scanHz = 10,
   start,
+  noise = null,   // null = perfect sensors; see noise.js
+  seed = 1,
   log = (m) => console.log(`[sim ${new Date().toISOString()}] ${m}`),
 } = {}) {
-  const robot = new Robot(start ?? { x: world.bounds[0] / 2, y: world.bounds[1] / 2, theta: 0 });
+  const rng = makeRng(seed);
+  const robot = new Robot(start ?? world.start ?? { x: world.bounds[0] / 2, y: world.bounds[1] / 2, theta: 0 });
 
   const state = {
     cmd: [0, 0],          // last !G per channel, -1000..1000
@@ -107,7 +111,7 @@ export function startSimulator({
   const sensorWss = new WebSocketServer({ port: sensorPort });
   sensorWss.on('connection', (ws) => {
     log('sensor client connected');
-    ws.send(JSON.stringify({ type: 'hello', world: { name: world.name, bounds: world.bounds, segments: world.segments }, robot: TB3, lidar: LDS01 }) + '\n');
+    ws.send(JSON.stringify({ type: 'hello', world: { name: world.name, bounds: world.bounds, segments: world.segments }, robot: TB3, lidar: LDS01, noise }) + '\n');
     ws.on('error', () => {});
   });
   function broadcastSensor(obj) {
@@ -119,7 +123,7 @@ export function startSimulator({
   const dt = 1 / tickHz;
   const physTimer = setInterval(() => {
     const units = state.estopped ? [0, 0] : state.cmd;
-    robot.step(units, dt, world);
+    robot.step(units, dt, world, noise, rng);
     if (!state.estopped && Date.now() - state.lastCmdAt > rwdMs) {
       stopMotors(`RWD: no serial command for >${rwdMs}ms`);
     }
@@ -127,7 +131,7 @@ export function startSimulator({
 
   const scanTimer = setInterval(() => {
     const gt = robot.pose();
-    broadcastSensor({ type: 'frame', t: Date.now(), groundTruth: gt, collided: robot.collided, scan: scan(world, gt) });
+    broadcastSensor({ type: 'frame', t: Date.now(), groundTruth: gt, odom: robot.odomPose(), collided: robot.collided, scan: scan(world, gt, LDS01, noise, rng) });
   }, 1000 / scanHz);
 
   // --- viewer (serves the one HTML file over http) --------------------
@@ -142,9 +146,11 @@ export function startSimulator({
       res.end(String(e));
     }
   });
+  // the viewer is optional — a taken port shouldn't take down the sim
+  httpd.on('error', (e) => log(`viewer http server not started (${e.code || e.message}) — sim continues`));
   httpd.listen(viewerPort);
 
-  log(`world "${world.name}" ${world.bounds[0]}x${world.bounds[1]}m — roboteq ws://127.0.0.1:${robotPort} (RWD ${rwdMs}ms), sensors ws://127.0.0.1:${sensorPort}, viewer http://127.0.0.1:${viewerPort}`);
+  log(`world "${world.name}" ${world.bounds[0]}x${world.bounds[1]}m, noise ${noise ? `on (seed ${seed})` : 'off'} — roboteq ws://127.0.0.1:${robotPort} (RWD ${rwdMs}ms), sensors ws://127.0.0.1:${sensorPort}, viewer http://127.0.0.1:${viewerPort}`);
 
   return {
     robot,

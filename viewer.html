@@ -22,6 +22,7 @@
     <div>roboteq <span id="rs" class="off">…</span> · sensors <span id="ss" class="off">…</span></div>
     <div class="k">world</div><div id="world">–</div>
     <div class="k">ground-truth pose</div><div id="pose">–</div>
+    <div class="k">odometry (dead reckoning)</div><div id="odom">–</div>
     <div id="coll"></div>
     <hr style="border-color:#333" />
     <div class="k">drive</div>
@@ -67,8 +68,12 @@ function connectSensors() {
         $('world').textContent = `${world.name} · ${world.bounds[0]}×${world.bounds[1]} m`;
       } else if (m.type === 'frame') {
         latest = m;
-        const p = m.groundTruth;
+        const p = m.groundTruth, o = m.odom;
         $('pose').textContent = `x=${p.x.toFixed(2)}  y=${p.y.toFixed(2)}  θ=${(p.theta * 180 / Math.PI).toFixed(0)}°`;
+        if (o) {
+          const drift = Math.hypot(p.x - o.x, p.y - o.y);
+          $('odom').textContent = `x=${o.x.toFixed(2)}  y=${o.y.toFixed(2)}  θ=${(o.theta * 180 / Math.PI).toFixed(0)}°   (drift ${drift.toFixed(2)} m)`;
+        }
         $('coll').innerHTML = m.collided ? '<span class="off">● touching a wall</span>' : '';
       }
     }
@@ -133,6 +138,17 @@ function draw() {
 
   if (!latest) return;
   const p = latest.groundTruth;
+
+  // odometry ghost (where dead reckoning thinks the robot is)
+  if (latest.odom) {
+    const o = latest.odom;
+    g.strokeStyle = '#c9a227'; g.lineWidth = 1.5; g.setLineDash([4, 3]);
+    g.beginPath(); g.arc(X(o.x), Y(o.y), 0.11 * s, 0, 2 * Math.PI); g.stroke();
+    g.beginPath(); g.moveTo(X(o.x), Y(o.y));
+    g.lineTo(X(o.x + 0.18 * Math.cos(o.theta)), Y(o.y + 0.18 * Math.sin(o.theta)));
+    g.stroke();
+    g.setLineDash([]);
+  }
 
   // laser
   const sc = latest.scan;

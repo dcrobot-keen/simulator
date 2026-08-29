@@ -13,6 +13,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ENTRY = resolve(here, '../src/index.js');
 const RPORT = 8795;
 const SPORT = 8796;
+const VPORT = 8797;
 const RWD_MS = 400;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -25,9 +26,10 @@ const enc = new TextEncoder();
 
 let simLog = '';
 const sim = spawn(process.execPath, [ENTRY], {
-  // start near the vertical wall at x=5.5 so a full-speed dash reaches it
-  // in ~1s (TB3 Burger tops out at 0.22 m/s)
-  env: { ...process.env, SIM_PORT: String(RPORT), SIM_SENSOR_PORT: String(SPORT), SIM_RWD_MS: String(RWD_MS), SIM_START: '5.15,3.0,0' },
+  // noise off so the geometry checks are exact; start near the vertical
+  // wall at x=5.5 so a full-speed dash reaches it in ~1s (TB3 tops out at
+  // 0.22 m/s)
+  env: { ...process.env, SIM_PORT: String(RPORT), SIM_SENSOR_PORT: String(SPORT), SIM_VIEWER_PORT: String(VPORT), SIM_RWD_MS: String(RWD_MS), SIM_START: '5.15,3.0,0', SIM_NOISE: 'off' },
   stdio: ['ignore', 'pipe', 'inherit'],
 });
 sim.stdout.on('data', (d) => { simLog += d.toString(); process.stdout.write(d); });
