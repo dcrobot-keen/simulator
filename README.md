@@ -52,9 +52,22 @@ viewer draws the `odom` pose as a dashed ghost so the drift is visible.
 | `loop` | hallway around a central block — SLAM loop closure |
 | `maze` | serpentine passages, dead ends — planner stress |
 | `office` | four rooms joined by doorways |
+| `bedroom` | **generated** from a real iPhone LiDAR scan (`scan-to-map-studio/projects/bedroom`) sliced at 0.18 m — Phase 9 localization test: the sim *is* that room |
 
 Format: `{ name, bounds:[w,h], walls:[[x1,y1,x2,y2], …], start:[x,y,theta] }`
 in metres. The outer `bounds` rectangle is added as walls automatically.
+
+### From an iPhone scan
+
+`scripts/slicemap-to-world.mjs` turns a scan-to-map-studio `slicemap-v1`
+JSON (see that repo's `scripts/slice_map.py`) into a `worlds/*.world.json`.
+Occupied cells at the robot's LiDAR height become wall segments (exposed
+edges, collinear runs merged); unknown/free become open space — so the sim
+world is "the room as the iPhone slice saw it". `src/slicemap.js` is the
+loader; `--walls-only` drops furniture-classed cells; `--start x,y,theta`
+sets the spawn (default: free-cell centroid). Used to test iPhone-map
+-relative localization against ground truth with no hardware (roadmap.md
+Phase 9).
 
 ## Drive it
 
@@ -70,7 +83,7 @@ body; watch it move (and hit walls) in `viewer.html` alongside.
 ## Test
 
 ```sh
-npm test             # sim-smoke (10) + noise-smoke (5), no browser
+npm test             # sim-smoke (10) + noise-smoke (5) + slicemap-smoke (10), no browser
 ```
 
 `sim-smoke`: body moves in the world, stops at a wall, encoders track,

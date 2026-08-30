@@ -1,0 +1,103 @@
+// slicemap-v1 loader + conversion to the simulator's wall-segment world.
+//
+// A slicemap-v1 file is produced by scan-to-map-studio/scripts/slice_map.py:
+// a 2D occupancy grid sliced from an iPhone LiDAR scan at a robot's LiDAR
+// mount height (roadmap.md Phase 9). JSON:
+//   { format:"slicemap-v1", z, band, resolution, origin:[x,y], cols, rows,
+//     data:<base64 row-major uint8 codes, row 0 = min y> }
+// codes: 0 unknown, 1 free, 2 occupied (furniture / unspecified), 3 occupied-wall.
+//
+// toWorld() turns it into { name, bounds, walls, start } — occupied cells
+// become axis-aligned wall segments (exposed edges only, then collinear
+// runs merged so the raycaster isn't iterating thousands of unit edges).
+// unknown/free both become open space: the sim world is "the room as the
+// iPhone slice saw it at height z".
+
+export const SLICE_CODE = { UNKNOWN: 0, FREE: 1, OCC_FURNITURE: 2, OCC_WALL: 3 };
+
+const b64decode = (s) =>
+  typeof atob === 'function'
+    ? Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
+    : new Uint8Array(Buffer.from(s, 'base64'));
+
+/** Parse a slicemap-v1 object. Returns { z, band, resolution, origin:[x,y], cols, rows, codes:Uint8Array }. */
+export function parseSlicemap(obj) {
+  if (!obj || obj.format !== 'slicemap-v1') throw new Error('not a slicemap-v1 object');
+  const codes = b64decode(obj.data);
+  if (codes.length !== obj.cols * obj.rows) {
+    throw new Error(`slicemap data length ${codes.length} != cols*rows ${obj.cols * obj.rows}`);
+  }
+  return {
+    z: obj.z, band: obj.band, resolution: obj.resolution,
+    origin: [obj.origin[0], obj.origin[1]], cols: obj.cols, rows: obj.rows, codes,
+  };
+}
+
+/**
+ * slicemap -> simulator world.json shape.
+ * @param {object} slice - parseSlicemap() output
+ * @param {object} [opts]
+ * @param {boolean} [opts.wallsOnly=false] - only OCC_WALL cells become walls (skip furniture)
+ * @param {[number,number,number]} [opts.start] - spawn pose in world coords (origin-relative); default = centroid of free cells
+ * @param {string} [opts.name='slice']
+ * @returns {{ name, bounds:[number,number], walls:number[][], start:[number,number,number] }}
+ */
+export function toWorld(slice, { wallsOnly = false, start, name = 'slice' } = {}) {
+  const { cols, rows, resolution: r, codes } = slice;
+  const occ = (c, row) => {
+    if (c < 0 || c >= cols || row < 0 || row >= rows) return false;
+    const v = codes[row * cols + c];
+    return wallsOnly ? v === SLICE_CODE.OCC_WALL : v === SLICE_CODE.OCC_WALL || v === SLICE_CODE.OCC_FURNITURE;
+  };
+
+  // Exposed unit edges, keyed for collinear-run merging.
+  // Horizontal edge on grid line y=row (world y = row*r), spanning col..col+1.
+  // Vertical edge on grid line x=col (world x = col*r), spanning row..row+1.
+  const hEdges = new Map(); // row -> Set of col (edge = segment [col, col+1] along grid line y=row)
+  const vEdges = new Map(); // col -> Set of row (edge = segment [row, row+1] along grid line x=col)
+
+  const bucket = (map, k) => { let s = map.get(k); if (!s) map.set(k, (s = new Set())); return s; };
+  const addH = (row, col) => bucket(hEdges, row).add(col);
+  const addV = (col, row) => bucket(vEdges, col).add(row);
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      if (!occ(col, row)) continue;
+      if (!occ(col, row - 1)) addH(row, col);       // bottom edge
+      if (!occ(col, row + 1)) addH(row + 1, col);   // top edge
+      if (!occ(col - 1, row)) addV(col, row);       // left edge
+      if (!occ(col + 1, row)) addV(col + 1, row);   // right edge
+    }
+  }
+
+  const walls = [];
+  const mergeRuns = (map, makeSeg) => {
+    for (const [line, set] of map) {
+      const idxs = [...set].sort((a, b) => a - b);
+      let runStart = idxs[0];
+      let prev = idxs[0];
+      for (let i = 1; i <= idxs.length; i++) {
+        if (i < idxs.length && idxs[i] === prev + 1) { prev = idxs[i]; continue; }
+        walls.push(makeSeg(Number(line), runStart, prev + 1));
+        if (i < idxs.length) { runStart = idxs[i]; prev = idxs[i]; }
+      }
+    }
+  };
+  mergeRuns(hEdges, (row, c0, c1) => [c0 * r, row * r, c1 * r, row * r]);
+  mergeRuns(vEdges, (col, r0, r1) => [col * r, r0 * r, col * r, r1 * r]);
+
+  const bounds = [cols * r, rows * r];
+
+  let spawn = start;
+  if (!spawn) {
+    let sx = 0, sy = 0, n = 0;
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        if (codes[row * cols + col] === SLICE_CODE.FREE) { sx += (col + 0.5) * r; sy += (row + 0.5) * r; n++; }
+      }
+    }
+    spawn = n > 0 ? [sx / n, sy / n, 0] : [bounds[0] / 2, bounds[1] / 2, 0];
+  }
+
+  return { name, bounds, walls, start: spawn };
+}
