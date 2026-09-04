@@ -88,16 +88,48 @@ export function toWorld(slice, { wallsOnly = false, start, name = 'slice' } = {}
 
   const bounds = [cols * r, rows * r];
 
-  let spawn = start;
-  if (!spawn) {
-    let sx = 0, sy = 0, n = 0;
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        if (codes[row * cols + col] === SLICE_CODE.FREE) { sx += (col + 0.5) * r; sy += (row + 0.5) * r; n++; }
-      }
-    }
-    spawn = n > 0 ? [sx / n, sy / n, 0] : [bounds[0] / 2, bounds[1] / 2, 0];
-  }
+  const spawn = start ?? defaultSpawn(slice, wallsOnly, bounds);
 
   return { name, bounds, walls, start: spawn };
+}
+
+/**
+ * Default spawn: the free cell farthest from anything that becomes a wall
+ * (multi-source BFS distance transform), ties broken toward the free-cell
+ * centroid. The centroid alone is a bad spawn -- on a real scan it often
+ * lands within the body radius of furniture, and the sim then reports
+ * "touching a wall" forever because translation is dropped on collision.
+ * Unknown cells count as open (they are open space in the world), so only
+ * occupied cells and the grid boundary push the spawn away.
+ */
+export function defaultSpawn(slice, wallsOnly, bounds) {
+  const { cols, rows, resolution: r, codes } = slice;
+  const isWall = (v) => (wallsOnly ? v === SLICE_CODE.OCC_WALL : v === SLICE_CODE.OCC_WALL || v === SLICE_CODE.OCC_FURNITURE);
+  const dist = new Int32Array(cols * rows).fill(-1);
+  const queue = [];
+  let sx = 0, sy = 0, n = 0;
+  for (let i = 0; i < codes.length; i++) {
+    if (isWall(codes[i])) { dist[i] = 0; queue.push(i); }
+    if (codes[i] === SLICE_CODE.FREE) { sx += (i % cols) + 0.5; sy += Math.floor(i / cols) + 0.5; n++; }
+  }
+  if (n === 0) return [bounds[0] / 2, bounds[1] / 2, 0];
+  const cx = sx / n, cy = sy / n;
+  for (let col = 0; col < cols; col++) for (const row of [0, rows - 1]) { const i = row * cols + col; if (dist[i] < 0) { dist[i] = 1; queue.push(i); } }
+  for (let row = 0; row < rows; row++) for (const col of [0, cols - 1]) { const i = row * cols + col; if (dist[i] < 0) { dist[i] = 1; queue.push(i); } }
+  for (let q = 0; q < queue.length; q++) {
+    const i = queue[q], col = i % cols, row = Math.floor(i / cols), d = dist[i] + 1;
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const c2 = col + dc, r2 = row + dr;
+      if (c2 < 0 || c2 >= cols || r2 < 0 || r2 >= rows) continue;
+      const j = r2 * cols + c2;
+      if (dist[j] < 0) { dist[j] = d; queue.push(j); }
+    }
+  }
+  let best = -1, bestD = -1, bestC = Infinity;
+  for (let i = 0; i < codes.length; i++) {
+    if (codes[i] !== SLICE_CODE.FREE) continue;
+    const dc = (i % cols) + 0.5 - cx, dr = Math.floor(i / cols) + 0.5 - cy, c = dc * dc + dr * dr;
+    if (dist[i] > bestD || (dist[i] === bestD && c < bestC)) { best = i; bestD = dist[i]; bestC = c; }
+  }
+  return [((best % cols) + 0.5) * r, (Math.floor(best / cols) + 0.5) * r, 0];
 }

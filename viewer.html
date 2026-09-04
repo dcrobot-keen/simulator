@@ -108,10 +108,20 @@ addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
 // 20 Hz control tick — arcade mix -> !G, and doubles as the keepalive that
 // keeps the sim's RWD watchdog happy.
+// Sent only while a drive key is held (plus one final zero on release). An
+// idle viewer must stay silent: the sim keeps the *last* !G per channel, so a
+// 20 Hz stream of zeros from this page would cancel whatever the dashboard /
+// gamepad is sending, and any command at all feeds the RWD watchdog and hides
+// "tab closed -> robot stops".
+let driving = false;
 setInterval(() => {
   if (!roboteq || roboteq.readyState !== 1) return;
   const fwd = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0);
   const turn = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+  const held = fwd !== 0 || turn !== 0;
+  if (!held && !driving) return;
+  if (held && !driving) roboteq.send('!MG\r'); // re-arm in case RWD latched while idle
+  driving = held;
   const L = Math.max(-1000, Math.min(1000, Math.round((fwd + turn * 0.6) * 1000)));
   const R = Math.max(-1000, Math.min(1000, Math.round((fwd - turn * 0.6) * 1000)));
   roboteq.send(`!G 1 ${L}_!G 2 ${R}\r`);
