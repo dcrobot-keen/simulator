@@ -31,6 +31,7 @@ export function startSimulator({
   start,
   noise = null,   // null = perfect sensors; see noise.js
   seed = 1,
+  floor = null,   // { pngPath, width, height, extent:[minX,minY,maxX,maxY] } -> viewer background
   log = (m) => console.log(`[sim ${new Date().toISOString()}] ${m}`),
 } = {}) {
   const rng = makeRng(seed);
@@ -111,7 +112,7 @@ export function startSimulator({
   const sensorWss = new WebSocketServer({ port: sensorPort });
   sensorWss.on('connection', (ws) => {
     log('sensor client connected');
-    ws.send(JSON.stringify({ type: 'hello', world: { name: world.name, bounds: world.bounds, segments: world.segments }, robot: TB3, lidar: LDS01, noise }) + '\n');
+    ws.send(JSON.stringify({ type: 'hello', world: { name: world.name, bounds: world.bounds, segments: world.segments }, robot: TB3, lidar: LDS01, noise, floor: floor ? { url: '/floor.png', extent: floor.extent, width: floor.width, height: floor.height } : null }) + '\n');
     ws.on('error', () => {});
   });
   function broadcastSensor(obj) {
@@ -138,6 +139,11 @@ export function startSimulator({
   const viewerUrl = new URL('../viewer.html', import.meta.url);
   const httpd = createServer(async (req, res) => {
     try {
+      if (req.url === '/floor.png' && floor) {
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' });
+        res.end(await readFile(floor.pngPath));
+        return;
+      }
       const html = await readFile(viewerUrl);
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(html);

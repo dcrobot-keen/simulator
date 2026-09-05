@@ -11,6 +11,7 @@
 // robot-os-chromium's dashboard (local mode) at ws://127.0.0.1:8765.
 
 import { readFile, readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { World } from './world.js';
 import { parseSlicemap, toWorld } from './slicemap.js';
 import { startSimulator } from './server.js';
@@ -33,6 +34,25 @@ try {
   process.exit(1);
 }
 
+// A slicemap published by the alignment workspace may come with the app's floor
+// image composited on the same grid (<stem>.floor.png/.json). The viewer draws it
+// under the walls; the grid corner is the world origin, so the extent is just
+// [0, 0, cols*r, rows*r] -- the same rule pathfinder uses.
+let floor = null;
+{
+  const stem = new URL(worldPath, root).pathname.replace(/\.slicemap\.json$|\.json$/i, '');
+  const pngPath = decodeURIComponent(stem) + '.floor.png';
+  const jsonPath = decodeURIComponent(stem) + '.floor.json';
+  if (existsSync(pngPath) && existsSync(jsonPath)) {
+    try {
+      const meta = JSON.parse(await readFile(jsonPath, 'utf-8'));
+      floor = { pngPath, width: meta.width_px, height: meta.height_px, extent: [0, 0, meta.width_px * meta.resolution, meta.height_px * meta.resolution] };
+    } catch (e) {
+      console.error(`floor image sidecar unreadable (${e.message}) -- viewer draws walls only`);
+    }
+  }
+}
+
 let start;
 if (process.env.SIM_START) {
   const [x, y, theta] = process.env.SIM_START.split(',').map(Number);
@@ -42,6 +62,6 @@ if (process.env.SIM_START) {
 const noise = resolveNoise(process.env.SIM_NOISE || 'default');
 const seed = Number(process.env.SIM_SEED || 1);
 
-const sim = startSimulator({ world, start, noise, seed });
+const sim = startSimulator({ world, start, noise, seed, floor });
 
 process.on('SIGINT', () => { sim.stop(); process.exit(0); });
