@@ -229,12 +229,13 @@ export function startSimulator({
   const viewerUrl = new URL('../viewer.html', import.meta.url);
   const httpd = createServer(async (req, res) => {
     try {
-      if (req.url === '/floor.png' && floor) {
+      const path = (req.url || '/').split('?')[0]; // the viewer cache-busts with ?t=...
+      if (path === '/floor.png' && floor) {
         res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' });
         res.end(await readFile(floor.pngPath));
         return;
       }
-      if (req.url === '/robots.json') {
+      if (path === '/robots.json') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(sims.map((s) => ({ id: s.id, robotPort: s.robotPort, sensorPort: s.sensorPort }))));
         return;
