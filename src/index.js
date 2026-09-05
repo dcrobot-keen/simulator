@@ -12,6 +12,7 @@
 
 import { readFile, readdir } from 'node:fs/promises';
 import { World } from './world.js';
+import { parseSlicemap, toWorld } from './slicemap.js';
 import { startSimulator } from './server.js';
 import { resolveNoise } from './noise.js';
 
@@ -19,7 +20,13 @@ const root = new URL('..', import.meta.url);
 const worldPath = process.env.SIM_WORLD || 'worlds/room.world.json';
 let world;
 try {
-  world = new World(JSON.parse(await readFile(new URL(worldPath, root))));
+  const raw = JSON.parse(await readFile(new URL(worldPath, root)));
+  // A slicemap-v1 (scan-to-map-studio slice, or its merged output published
+  // straight into worlds/ by the alignment workspace) is accepted as a world
+  // directly -- same conversion as scripts/slicemap-to-world.mjs, no extra step.
+  world = new World(raw.format === 'slicemap-v1'
+    ? toWorld(parseSlicemap(raw), { name: worldPath.split('/').pop().replace(/\.slicemap\.json$|\.json$/, '') })
+    : raw);
 } catch (e) {
   const avail = (await readdir(new URL('worlds/', root))).filter((f) => f.endsWith('.world.json'));
   console.error(`could not load world "${worldPath}": ${e.message}\navailable: ${avail.join(', ')}`);
