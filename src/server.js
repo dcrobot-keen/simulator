@@ -85,6 +85,7 @@ export function startSimulator({
   noise = null,   // null = perfect sensors; see noise.js
   seed = 1,
   floor = null,   // { pngPath, width, height, extent:[minX,minY,maxX,maxY] } -> viewer background
+  meshes = null,  // [{ scan, url, path, offsetX, offsetZ, yawRadians, origin }] -> viewer 3D scan meshes
   log = (m) => console.log(`[sim ${new Date().toISOString()}] ${m}`),
 } = {}) {
   const rng = makeRng(seed);
@@ -189,6 +190,7 @@ export function startSimulator({
         robot: TB3, lidar: LDS01, noise,
         robots: sims.map((s) => ({ id: s.id, robotPort: s.robotPort, sensorPort: s.sensorPort })),
         floor: floor ? { url: '/floor.png', extent: floor.extent, width: floor.width, height: floor.height } : null,
+        meshes: meshes ? meshes.map(({ path, ...m }) => m) : null,
       }) + '\n');
       ws.on('error', () => {});
     });
@@ -245,6 +247,15 @@ export function startSimulator({
         } catch {
           res.writeHead(404); res.end('not found');
         }
+        return;
+      }
+      // iOS scan meshes (overlay.glb per source scan of a merged slicemap)
+      const scanMatch = meshes && path.match(/^\/scans\/([\w.-]+)\/overlay\.glb$/);
+      if (scanMatch) {
+        const m = meshes.find((x) => x.scan === scanMatch[1]);
+        if (!m) { res.writeHead(404); res.end('unknown scan'); return; }
+        res.writeHead(200, { 'Content-Type': 'model/gltf-binary', 'Cache-Control': 'max-age=3600' });
+        res.end(await readFile(m.path));
         return;
       }
       if (path === '/robots.json') {

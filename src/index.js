@@ -24,6 +24,12 @@ import { resolveNoise } from './noise.js';
 const root = new URL('..', import.meta.url);
 const worldPath = process.env.SIM_WORLD || 'worlds/room.world.json';
 let world;
+// iOS scan meshes for the 3D viewer: a merged slicemap lists its source scans with the
+// alignment the studio used (offsetX/offsetZ/yawRadians in the ARKit x/z plane). If the
+// studio's projects dir is reachable (SCAN_MESH_DIR, compose mounts it at /app/scan-projects),
+// each scan's overlay.glb (textured usdz mesh + point layers) is served at /scans/<scan>/overlay.glb
+// and placed in the world with the same alignment -- see viewer.html.
+let meshes = null;
 try {
   const raw = JSON.parse(await readFile(new URL(worldPath, root)));
   // A slicemap-v1 (scan-to-map-studio slice, or its merged output published
@@ -32,6 +38,19 @@ try {
   world = new World(raw.format === 'slicemap-v1'
     ? toWorld(parseSlicemap(raw), { name: worldPath.split('/').pop().replace(/\.slicemap\.json$|\.json$/, '') })
     : raw);
+  if (raw.format === 'slicemap-v1' && Array.isArray(raw.sources) && raw.sources.length) {
+    const meshDir = process.env.SCAN_MESH_DIR || new URL('../scan-to-map-studio/projects/', root).pathname;
+    const dir = decodeURIComponent(meshDir).replace(/\/$/, '');
+    meshes = raw.sources
+      .filter((s) => typeof s.scan === 'string' && /^[\w.-]+$/.test(s.scan) && existsSync(`${dir}/${s.scan}/overlay.glb`))
+      .map((s) => ({
+        scan: s.scan, url: `/scans/${s.scan}/overlay.glb`, path: `${dir}/${s.scan}/overlay.glb`,
+        offsetX: s.offsetX ?? 0, offsetZ: s.offsetZ ?? 0, yawRadians: s.yawRadians ?? 0,
+        origin: raw.origin, // slice-plane coords of the grid corner (= world 0,0)
+      }));
+    if (meshes.length === 0) meshes = null;
+    console.log(`[sim] scan meshes: ${meshes ? meshes.map((m) => m.scan).join(', ') : `none (looked in ${dir})`}`);
+  }
 } catch (e) {
   const avail = (await readdir(new URL('worlds/', root))).filter((f) => f.endsWith('.world.json'));
   console.error(`could not load world "${worldPath}": ${e.message}\navailable: ${avail.join(', ')}`);
@@ -81,6 +100,6 @@ if (process.env.SIM_ROBOTS) {
   });
 }
 
-const sim = startSimulator({ world, start, robots, noise, seed, floor });
+const sim = startSimulator({ world, start, robots, noise, seed, floor, meshes });
 
 process.on('SIGINT', () => { sim.stop(); process.exit(0); });

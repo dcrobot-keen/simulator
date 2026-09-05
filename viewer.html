@@ -16,6 +16,9 @@
   #bar button:disabled { opacity: .4; cursor: not-allowed; }
   #bar .sp { flex: 1; }
   #bar .hint { color: var(--faint); font-size: 11px; }
+  #bar label { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); }
+  #bar input[type=range] { width: 90px; accent-color: var(--accent); }
+  #meshCtl { display: inline-flex; align-items: center; gap: 6px; padding-left: 8px; border-left: 1px solid var(--border); }
   canvas { background: #1a1a1a; border: 1px solid var(--border); border-radius: 8px; display: block; width: 100%; height: auto; }
   #c3 { background: var(--bg); touch-action: none; }
   [hidden] { display: none !important; }
@@ -45,6 +48,12 @@
       <button id="btnFollow" title="카메라가 이 뷰어의 로봇을 따라간다">추적</button>
       <button id="btnIso" title="기본 3/4 시점">기본 시점</button>
       <button id="btnTop" title="위에서 내려다보는 시점">탑뷰</button>
+      <span id="meshCtl" hidden>
+        <button id="btnMesh" class="active" title="iOS 스캔 메시(overlay.glb) 표시">스캔 메시</button>
+        <label title="이 높이 위는 잘라낸다(천장 제거)">절단 <input id="cutH" type="range" min="0.3" max="3" step="0.05" value="1.8"> <span id="cutHv">1.8 m</span></label>
+        <label title="메시 투명도"><input id="meshOp" type="range" min="0.2" max="1" step="0.05" value="1"></label>
+        <span id="meshStat" class="hint"></span>
+      </span>
       <select id="robotSel" title="어느 로봇의 센서 스트림을 볼지"></select>
     </div>
     <canvas id="c" width="720" height="540"></canvas>
@@ -52,6 +61,7 @@
     <div id="legend">
       <span style="--c:#e7ecf3">벽</span><span style="--c:#f5a623">가구</span><span style="--c:#4fd1c5">이 로봇</span>
       <span style="--c:#8b96a8">다른 로봇</span><span style="--c:#22d3ee">LIDAR</span><span style="--c:#c9a227">오도메트리(추정)</span>
+      <span id="legendMesh" style="--c:#b48a5a" hidden>iOS 스캔 메시</span>
     </div>
   </div>
   <div id="side">
@@ -316,11 +326,13 @@ draw();
 
 <!-- ---- 3D view (three.js, vendored under /vendor so it works offline) ---- -->
 <script type="importmap">
-{ "imports": { "three": "/vendor/three.module.min.js", "three/addons/controls/OrbitControls.js": "/vendor/OrbitControls.js" } }
+{ "imports": { "three": "/vendor/three.module.min.js", "three/addons/controls/OrbitControls.js": "/vendor/OrbitControls.js",
+               "three/addons/loaders/GLTFLoader.js": "/vendor/loaders/GLTFLoader.js" } }
 </script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c3');
@@ -333,6 +345,7 @@ try {
   throw e;
 }
 renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.localClippingEnabled = true; // scan meshes are cut above `cutH` so the ceiling doesn't hide the room
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b0e13);
 const camera = new THREE.PerspectiveCamera(50, 4 / 3, 0.05, 500);
@@ -370,6 +383,7 @@ function disposeGroup(grp) {
 
 function buildWorld(hello) {
   if (staticGroup) disposeGroup(staticGroup);
+  wallMats = [];
   staticGroup = new THREE.Group();
   const world = hello.world;
   bounds = world.bounds;
@@ -420,6 +434,7 @@ function buildWorld(hello) {
     const spec = WALL[kind];
     const mat = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.85, metalness: 0.05, transparent: spec.opacity < 1, opacity: spec.opacity });
     const inst = new THREE.InstancedMesh(unit, mat, segs.length);
+    wallMats.push({ mat, opacity: spec.opacity });
     segs.forEach((s, i) => {
       const dx = s.x2 - s.x1, dy = s.y2 - s.y1;
       const L = Math.max(Math.hypot(dx, dy), THICK);
@@ -434,6 +449,7 @@ function buildWorld(hello) {
     staticGroup.add(inst);
   }
   scene.add(staticGroup);
+  loadMeshes(hello);
 
   // first look: the whole world from the "south"
   if (!hadWorld) {
@@ -444,6 +460,125 @@ function buildWorld(hello) {
   }
 }
 let hadWorld = false;
+let wallMats = [];
+
+// ---- iOS scan meshes (overlay.glb per source scan, served by the simulator) ---------
+// Studio convention: slice plane (x, y) = (x_arkit, -z_arkit), height z = y_arkit -- and the
+// studio exports overlay.glb in THAT Z-up frame (not ARKit y-up). A scan is placed by a CCW yaw
+// rotation then a translation (offsetX, -offsetZ) in the plane; the grid corner (world 0,0)
+// sits at `origin`. three (X, Y, Z) = (plan x, height, -plan y), so: inner model rotation.x =
+// -90 deg (Z-up -> Y-up), holder rotation.y = yaw, holder position = (offsetX - ox, 0, offsetZ + oy).
+const meshGroup = new THREE.Group();
+scene.add(meshGroup);
+const cutPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.8); // keep y <= 1.8
+const meshMats = new Set();
+let meshesVisible = true;
+function loadMeshes(hello) {
+  for (const c of [...meshGroup.children]) { meshGroup.remove(c); disposeGroup(c); }
+  meshMats.clear();
+  const list = hello.meshes ?? [];
+  $('meshCtl').hidden = list.length === 0;
+  $('legendMesh').hidden = list.length === 0;
+  if (list.length === 0) return;
+  const [ox, oy] = list[0].origin ?? [0, 0];
+  const loader = new GLTFLoader();
+  let done = 0;
+  $('meshStat').textContent = `메시 0/${list.length}`;
+  for (const m of list) {
+    loader.load(m.url, (gltf) => {
+      const root = gltf.scene;
+      // keep the textured scan mesh, drop the studio's point-cloud layers
+      const drop = [];
+      root.traverse((o) => { if (o.isPoints || (o.isMesh && o.name && /point|cloud|base_map|occup/i.test(o.name))) drop.push(o); });
+      for (const o of drop) o.parent?.remove(o);
+      root.rotation.x = -Math.PI / 2; // studio Z-up -> three Y-up
+      // The studio re-bases its point clouds so the (RANSAC) floor is z = 0, but exports the raw
+      // usdz mesh with the ARKit origin still at device height. Find the mesh's own floor -- the
+      // densest thin z-band near the bottom -- and lift the model so that band sits on the ground.
+      const floorZ = estimateFloorZ(root);
+      root.position.y = -floorZ;
+      root.traverse((o) => {
+        if (!o.isMesh) return;
+        if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals();
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const mat of mats) {
+          if (!mat.map && !o.geometry.attributes.color) {
+            // the studio's glb carries no texture: warm matte shading so walls/floor read by light
+            mat.color.setHex(0xb9ad9a);
+            mat.roughness = 0.95;
+            mat.metalness = 0;
+            mat.flatShading = true;
+            mat.needsUpdate = true;
+          }
+          mat.side = THREE.DoubleSide;
+          mat.clippingPlanes = [cutPlane];
+          mat.transparent = true;
+          mat.opacity = Number($('meshOp').value);
+          mat.depthWrite = mat.opacity >= 0.999;
+          meshMats.add(mat);
+        }
+      });
+      const holder = new THREE.Group();
+      holder.add(root);
+      holder.rotation.y = m.yawRadians ?? 0;
+      holder.position.set((m.offsetX ?? 0) - ox, 0, (m.offsetZ ?? 0) + oy);
+      holder.name = m.scan;
+      holder.visible = meshesVisible;
+      meshGroup.add(holder);
+      done++;
+      $('meshStat').textContent = `메시 ${done}/${list.length}`;
+      applyWallDim();
+    }, undefined, (err) => {
+      done++;
+      $('meshStat').textContent = `메시 로드 실패: ${m.scan}`;
+      console.error('scan mesh load failed', m, err);
+    });
+  }
+}
+function estimateFloorZ(root) {
+  const zs = [];
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const a = o.geometry.attributes.position;
+    const step = Math.max(1, Math.floor(a.count / 60000));
+    for (let i = 0; i < a.count; i += step) zs.push(a.getZ(i)); // model-local z = studio up
+  });
+  if (zs.length < 100) return 0;
+  zs.sort((a, b) => a - b);
+  const lo = zs[Math.floor(zs.length * 0.01)];
+  const bin = 0.02, bins = new Map();
+  for (const z of zs) {
+    if (z < lo || z > lo + 0.8) continue;
+    const k = Math.round((z - lo) / bin);
+    bins.set(k, (bins.get(k) ?? 0) + 1);
+  }
+  let bestK = 0, bestN = -1;
+  for (const [k, n] of bins) if (n > bestN) { bestN = n; bestK = k; }
+  return lo + bestK * bin;
+}
+function applyWallDim() {
+  // with the real scan on screen the extruded wall boxes are only a hint: dim them
+  const dim = meshesVisible && meshGroup.children.length > 0;
+  for (const { mat, opacity } of wallMats) {
+    mat.transparent = true;
+    mat.opacity = dim ? Math.min(opacity, 0.25) : opacity;
+    mat.depthWrite = !dim;
+  }
+}
+$('btnMesh').addEventListener('click', () => {
+  meshesVisible = !meshesVisible;
+  $('btnMesh').classList.toggle('active', meshesVisible);
+  for (const c of meshGroup.children) c.visible = meshesVisible;
+  applyWallDim();
+});
+$('cutH').addEventListener('input', (e) => {
+  cutPlane.constant = Number(e.target.value);
+  $('cutHv').textContent = `${Number(e.target.value).toFixed(2)} m`;
+});
+$('meshOp').addEventListener('input', (e) => {
+  const op = Number(e.target.value);
+  for (const mat of meshMats) { mat.opacity = op; mat.depthWrite = op >= 0.999; }
+});
 
 // ---- robots, lidar, odometry ------------------------------------------------
 const robots = new Map(); // id -> { group, body, nose, label, mat }
@@ -606,7 +741,7 @@ function tick() {
 }
 tick();
 
-window.view3d = { hello: buildWorld, frame: applyFrame };
+window.view3d = { hello: buildWorld, frame: applyFrame, scene, meshGroup, THREE }; // scene/meshGroup/THREE: devtools inspection
 if (window.simState.hello) buildWorld(window.simState.hello);
 if (window.simState.latest) applyFrame(window.simState.latest);
 </script>
