@@ -57,9 +57,11 @@ check('toWorld: default start is a free-cell centroid inside bounds',
   w.start[0] > 0 && w.start[0] < w.bounds[0] && w.start[1] > 0 && w.start[1] < w.bounds[1], JSON.stringify(w.start));
 
 // --- the produced world.json shape is what World() accepts ---
-check('toWorld: shape = { name, bounds, walls, start }',
+check('toWorld: shape = { name, bounds, walls, start }, walls = [x1,y1,x2,y2,kind]',
   typeof w.name === 'string' && Array.isArray(w.bounds) && Array.isArray(w.walls) && Array.isArray(w.start)
-  && w.walls.every((s) => Array.isArray(s) && s.length === 4));
+  && w.walls.every((s) => Array.isArray(s) && s.length === 5 && (s[4] === 'wall' || s[4] === 'furniture')));
+check('toWorld: both kinds present when furniture is kept; walls-only tags everything wall',
+  w.walls.some((s) => s[4] === 'furniture') && w.walls.some((s) => s[4] === 'wall') && wOnly.walls.every((s) => s[4] === 'wall'));
 
 console.log(failures === 0 ? '\nall slicemap smoke checks passed' : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

@@ -235,6 +235,18 @@ export function startSimulator({
         res.end(await readFile(floor.pngPath));
         return;
       }
+      // vendored three.js for the viewer's 3D mode (simulator/vendor, no CDN needed)
+      if (path.startsWith('/vendor/') && !path.includes('..')) {
+        const file = new URL('..' + path, import.meta.url);
+        try {
+          const body = await readFile(file);
+          res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'max-age=86400' });
+          res.end(body);
+        } catch {
+          res.writeHead(404); res.end('not found');
+        }
+        return;
+      }
       if (path === '/robots.json') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(sims.map((s) => ({ id: s.id, robotPort: s.robotPort, sensorPort: s.sensorPort }))));

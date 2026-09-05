@@ -2,23 +2,60 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<title>2D simulator viewer</title>
+<title>simulator viewer</title>
 <style>
-  body { font-family: ui-monospace, monospace; background: #111; color: #ddd; margin: 0; }
-  #wrap { display: flex; gap: 16px; padding: 16px; }
-  canvas { background: #1a1a1a; border: 1px solid #333; }
-  #side { font-size: 13px; line-height: 1.6; max-width: 320px; }
-  .k { color: #888; }
-  b { color: #6cf; }
-  .on { color: #2a7d2a; } .off { color: #a33; }
+  :root { --bg:#0b0e13; --panel:#121722; --panel-2:#1a212c; --border:#232b38; --text:#e7ecf3; --dim:#8b96a8; --faint:#525c6c;
+          --accent:#4fd1c5; --accent-2:#22d3ee; --warn:#f5a623; --danger:#ef4444; --success:#34d399; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg); color: var(--text); margin: 0; }
+  #wrap { display: flex; gap: 16px; padding: 12px 16px; }
+  #stage { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  #bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--dim); }
+  #bar button, #bar select { background: var(--panel-2); border: 1px solid var(--border); color: var(--dim); border-radius: 6px;
+    padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  #bar button.active { color: var(--accent); border-color: rgba(79, 209, 197, .4); background: rgba(79, 209, 197, .1); }
+  #bar button:disabled { opacity: .4; cursor: not-allowed; }
+  #bar .sp { flex: 1; }
+  #bar .hint { color: var(--faint); font-size: 11px; }
+  canvas { background: #1a1a1a; border: 1px solid var(--border); border-radius: 8px; display: block; width: 100%; height: auto; }
+  #c3 { background: var(--bg); touch-action: none; }
+  [hidden] { display: none !important; }
+  #side { font-size: 13px; line-height: 1.6; width: 300px; flex: none; }
+  .k { color: var(--faint); }
+  b { color: var(--accent-2); }
+  .on { color: var(--success); } .off { color: var(--danger); }
   code { background: #000; padding: 1px 5px; border-radius: 3px; }
+  #legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
+  #legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px;
+    vertical-align: -1px; background: var(--c); }
+  /* narrow window / iframe: side panel goes under the view */
+  @media (max-width: 760px) { #wrap { flex-direction: column; } #side { width: auto; } }
+  /* ?embed=1 (pathfinder 시뮬레이션 탭): view only */
+  body.embed #wrap { padding: 6px; gap: 6px; }
+  body.embed #side, body.embed #legend, body.embed .hint { display: none; }
 </style>
 </head>
 <body>
 <div id="wrap">
-  <canvas id="c" width="720" height="540"></canvas>
+  <div id="stage">
+    <div id="bar">
+      <button id="btn2d">2D 탑뷰</button>
+      <button id="btn3d">3D</button>
+      <span class="hint" id="hint3d"></span>
+      <span class="sp"></span>
+      <button id="btnFollow" title="카메라가 이 뷰어의 로봇을 따라간다">추적</button>
+      <button id="btnIso" title="기본 3/4 시점">기본 시점</button>
+      <button id="btnTop" title="위에서 내려다보는 시점">탑뷰</button>
+      <select id="robotSel" title="어느 로봇의 센서 스트림을 볼지"></select>
+    </div>
+    <canvas id="c" width="720" height="540"></canvas>
+    <canvas id="c3" hidden></canvas>
+    <div id="legend">
+      <span style="--c:#e7ecf3">벽</span><span style="--c:#f5a623">가구</span><span style="--c:#4fd1c5">이 로봇</span>
+      <span style="--c:#8b96a8">다른 로봇</span><span style="--c:#22d3ee">LIDAR</span><span style="--c:#c9a227">오도메트리(추정)</span>
+    </div>
+  </div>
   <div id="side">
-    <h3 style="margin:0 0 8px">2D simulator</h3>
+    <h3 style="margin:0 0 8px">simulator</h3>
     <div>roboteq <span id="rs" class="off">…</span> · sensors <span id="ss" class="off">…</span></div>
     <div class="k">world</div><div id="world">–</div>
     <div class="k">ground-truth pose</div><div id="pose">–</div>
@@ -29,33 +66,61 @@
     <div><code>W/S</code> or <code>↑/↓</code> forward/back</div>
     <div><code>A/D</code> or <code>←/→</code> turn</div>
     <div><code>Space</code> E-STOP (<code>!EX</code>) · <code>R</code> re-enable (<code>!MG</code>)</div>
+    <div class="k" style="margin-top:8px">3D camera</div>
+    <div>drag orbit · right-drag pan · wheel zoom</div>
     <div class="k" style="margin-top:8px">last !G</div><div id="cmd">0 / 0</div>
     <p style="color:#888">
       Run the sim first: <code>cd simulator &amp;&amp; npm start</code>.
-      This page speaks the same Roboteq protocol as the real dashboard — it's
-      just a minimal world view for the weekend check.
+      This page speaks the same Roboteq protocol as the real dashboard.
+      <code>?view=3d</code> opens in 3D, <code>?robot=&lt;id&gt;</code> follows another robot of the same world.
     </p>
   </div>
 </div>
 
 <script>
-const ROBOTEQ_URL = 'ws://127.0.0.1:8765';
-const SENSOR_URL  = 'ws://127.0.0.1:8766';
+// ---- shared state (read by the 3D module below) ----------------------
+const HOST = location.hostname || '127.0.0.1';
+const params = new URLSearchParams(location.search);
+let wantRobot = params.get('robot');          // follow a specific robot of a multi-robot world
+if (params.get('embed') === '1') document.body.classList.add('embed');
+let target = { robotPort: 8765, sensorPort: 8766 };
+window.simState = { hello: null, latest: null };
 
 const cv = document.getElementById('c');
 const g = cv.getContext('2d');
 const $ = (id) => document.getElementById(id);
 
-let world = null;       // {name, bounds:[w,h], segments:[{x1,y1,x2,y2}]}
+let world = null;       // {name, bounds:[w,h], segments:[{x1,y1,x2,y2,kind}]}
 let floorImg = null, floorExtent = null; // app floor image published with the slicemap (hello.floor)
 let lidarSpec = null;
-let latest = null;      // last sensor frame {groundTruth, collided, scan}
+let latest = null;      // last sensor frame {groundTruth, odom, collided, scan, others}
+let mode = '2d';
+
+// ---- 2D / 3D mode -----------------------------------------------------
+function setMode(next) {
+  mode = next;
+  $('c').hidden = next !== '2d';
+  $('c3').hidden = next !== '3d';
+  $('btn2d').classList.toggle('active', next === '2d');
+  $('btn3d').classList.toggle('active', next === '3d');
+  for (const id of ['btnFollow', 'btnIso', 'btnTop']) $(id).disabled = next !== '3d';
+  try { localStorage.setItem('simViewerMode', next); } catch {}
+}
+$('btn2d').addEventListener('click', () => setMode('2d'));
+$('btn3d').addEventListener('click', () => setMode('3d'));
+let initialMode = '2d';
+try { initialMode = localStorage.getItem('simViewerMode') || '2d'; } catch {}
+if (params.get('view') === '3d') initialMode = '3d';
+if (params.get('view') === '2d') initialMode = '2d';
+setMode(initialMode);
 
 // ---- sensor stream --------------------------------------------------------
 let sbuf = '';
+let sensorWs = null;
 function connectSensors() {
-  const ws = new WebSocket(SENSOR_URL);
-  ws.onopen = () => { $('ss').textContent = 'connected'; $('ss').className = 'on'; };
+  const ws = new WebSocket(`ws://${HOST}:${target.sensorPort}`);
+  sensorWs = ws;
+  ws.onopen = () => { $('ss').textContent = 'connected'; $('ss').className = 'on'; sbuf = ''; };
   ws.onclose = () => { $('ss').textContent = 'disconnected'; $('ss').className = 'off'; setTimeout(connectSensors, 1000); };
   ws.onmessage = (e) => {
     sbuf += e.data;
@@ -65,20 +130,42 @@ function connectSensors() {
       if (!line.trim()) continue;
       const m = JSON.parse(line);
       if (m.type === 'hello') {
-        world = m.world; lidarSpec = m.lidar;
-        if (m.robotId) $('world').title = `this viewer follows ${m.robotId}`;
-        if (m.robots && m.robots.length > 1) {
-          $('world').textContent = `${world.name} · ${world.bounds[0]}×${world.bounds[1]} m · ${m.robots.length} robots (viewing ${m.robotId})`;
+        // a multi-robot world: switch to the requested robot's ports, once
+        const robots = m.robots ?? [];
+        if (wantRobot && m.robotId !== wantRobot) {
+          const other = robots.find((r) => r.id === wantRobot);
+          wantRobot = null;
+          if (other) {
+            target = { robotPort: other.robotPort, sensorPort: other.sensorPort };
+            ws.close();
+            roboteq?.close();
+            return;
+          }
         }
+        wantRobot = null;
+        world = m.world; lidarSpec = m.lidar;
+        window.simState.hello = m;
+        const sel = $('robotSel');
+        sel.replaceChildren();
+        for (const r of robots) {
+          const opt = document.createElement('option');
+          opt.value = r.id; opt.textContent = r.id + (r.id === m.robotId ? ' (viewing)' : '');
+          sel.appendChild(opt);
+        }
+        sel.value = m.robotId;
+        sel.hidden = robots.length < 2;
+        $('world').textContent = `${world.name} · ${world.bounds[0]}×${world.bounds[1]} m` +
+          (robots.length > 1 ? ` · ${robots.length} robots (viewing ${m.robotId})` : '');
         if (m.floor && m.floor.url) {
           floorExtent = m.floor.extent;
           const img = new Image();
           img.onload = () => { floorImg = img; };
           img.src = m.floor.url + '?t=' + Date.now();
-        }
-        $('world').textContent = `${world.name} · ${world.bounds[0]}×${world.bounds[1]} m`;
+        } else { floorImg = null; floorExtent = null; }
+        window.view3d?.hello(m);
       } else if (m.type === 'frame') {
         latest = m;
+        window.simState.latest = m;
         const p = m.groundTruth, o = m.odom;
         $('pose').textContent = `x=${p.x.toFixed(2)}  y=${p.y.toFixed(2)}  θ=${(p.theta * 180 / Math.PI).toFixed(0)}°`;
         if (o) {
@@ -86,10 +173,19 @@ function connectSensors() {
           $('odom').textContent = `x=${o.x.toFixed(2)}  y=${o.y.toFixed(2)}  θ=${(o.theta * 180 / Math.PI).toFixed(0)}°   (drift ${drift.toFixed(2)} m)`;
         }
         $('coll').innerHTML = m.collided ? '<span class="off">● touching a wall / another robot</span>' : '';
+        window.view3d?.frame(m);
       }
     }
   };
 }
+$('robotSel').addEventListener('change', (e) => {
+  wantRobot = e.target.value;
+  const r = (window.simState.hello?.robots ?? []).find((x) => x.id === wantRobot);
+  if (!r) return;
+  target = { robotPort: r.robotPort, sensorPort: r.sensorPort };
+  sensorWs?.close();
+  roboteq?.close();
+});
 
 // ---- roboteq control ----------------------------------------------------
 let roboteq = null;
@@ -97,7 +193,7 @@ const keys = new Set();
 let lastCmd = [0, 0];
 
 function connectRoboteq() {
-  const ws = new WebSocket(ROBOTEQ_URL);
+  const ws = new WebSocket(`ws://${HOST}:${target.robotPort}`);
   roboteq = ws;
   ws.onopen = () => {
     $('rs').textContent = 'connected'; $('rs').className = 'on';
@@ -109,6 +205,7 @@ function connectRoboteq() {
 }
 
 addEventListener('keydown', (e) => {
+  if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT')) return;
   const k = e.key.toLowerCase();
   if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
   if (k === ' ') { roboteq && roboteq.send('!EX\r'); return; }
@@ -118,12 +215,9 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
 // 20 Hz control tick — arcade mix -> !G, and doubles as the keepalive that
-// keeps the sim's RWD watchdog happy.
-// Sent only while a drive key is held (plus one final zero on release). An
-// idle viewer must stay silent: the sim keeps the *last* !G per channel, so a
-// 20 Hz stream of zeros from this page would cancel whatever the dashboard /
-// gamepad is sending, and any command at all feeds the RWD watchdog and hides
-// "tab closed -> robot stops".
+// keeps the sim's RWD watchdog happy. Sent only while a drive key is held
+// (plus one final zero on release): an idle viewer must stay silent, or its
+// zeros would cancel whatever the dashboard / nav stack is sending.
 let driving = false;
 setInterval(() => {
   if (!roboteq || roboteq.readyState !== 1) return;
@@ -139,9 +233,11 @@ setInterval(() => {
   if (L !== lastCmd[0] || R !== lastCmd[1]) { lastCmd = [L, R]; $('cmd').textContent = `${L} / ${R}`; }
 }, 50);
 
-// ---- draw -----------------------------------------------------------
+// ---- 2D draw ---------------------------------------------------------------
+const KIND_COLOR = { wall: '#8a8f98', furniture: '#a8762a', border: '#3a4150' };
 function draw() {
   requestAnimationFrame(draw);
+  if (mode !== '2d') return;
   g.clearRect(0, 0, cv.width, cv.height);
   if (!world) return;
 
@@ -159,9 +255,10 @@ function draw() {
     g.globalAlpha = 1;
   }
 
-  // walls
-  g.strokeStyle = '#5a5a5a'; g.lineWidth = 2;
+  // walls (colour by kind when the world came from a slicemap)
+  g.lineWidth = 2;
   for (const seg of world.segments) {
+    g.strokeStyle = KIND_COLOR[seg.kind] ?? KIND_COLOR.wall;
     g.beginPath(); g.moveTo(X(seg.x1), Y(seg.y1)); g.lineTo(X(seg.x2), Y(seg.y2)); g.stroke();
   }
 
@@ -181,7 +278,7 @@ function draw() {
 
   // laser
   const sc = latest.scan;
-  g.fillStyle = 'rgba(120,200,255,0.5)';
+  g.fillStyle = 'rgba(34,211,238,0.6)';
   for (let i = 0; i < sc.ranges.length; i++) {
     const r = sc.ranges[i];
     if (r >= sc.rangeMax - 1e-6) continue;
@@ -194,7 +291,7 @@ function draw() {
   const rr = 0.11 * s;
   for (const o of latest.others ?? []) {
     g.beginPath(); g.arc(X(o.x), Y(o.y), rr, 0, 2 * Math.PI);
-    g.fillStyle = o.collided ? '#a66' : '#999'; g.fill();
+    g.fillStyle = o.collided ? '#a66' : '#8b96a8'; g.fill();
     g.strokeStyle = '#fff'; g.lineWidth = 2;
     g.beginPath(); g.moveTo(X(o.x), Y(o.y));
     g.lineTo(X(o.x + 0.18 * Math.cos(o.theta)), Y(o.y + 0.18 * Math.sin(o.theta)));
@@ -205,7 +302,7 @@ function draw() {
 
   // this viewer's robot
   g.beginPath(); g.arc(X(p.x), Y(p.y), rr, 0, 2 * Math.PI);
-  g.fillStyle = latest.collided ? '#a33' : '#6cf'; g.fill();
+  g.fillStyle = latest.collided ? '#ef4444' : '#4fd1c5'; g.fill();
   g.strokeStyle = '#fff'; g.lineWidth = 2;
   g.beginPath(); g.moveTo(X(p.x), Y(p.y));
   g.lineTo(X(p.x + 0.18 * Math.cos(p.theta)), Y(p.y + 0.18 * Math.sin(p.theta)));
@@ -215,6 +312,303 @@ function draw() {
 connectSensors();
 connectRoboteq();
 draw();
+</script>
+
+<!-- ---- 3D view (three.js, vendored under /vendor so it works offline) ---- -->
+<script type="importmap">
+{ "imports": { "three": "/vendor/three.module.min.js", "three/addons/controls/OrbitControls.js": "/vendor/OrbitControls.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('c3');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+} catch (e) {
+  $('btn3d').disabled = true;
+  $('hint3d').textContent = 'WebGL 사용 불가: ' + e.message;
+  throw e;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0e13);
+const camera = new THREE.PerspectiveCamera(50, 4 / 3, 0.05, 500);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.1;
+controls.maxPolarAngle = Math.PI / 2 - 0.02;
+controls.screenSpacePanning = false;
+scene.add(new THREE.HemisphereLight(0xdfe7f5, 0x1a212c, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(6, 14, 8);
+scene.add(sun);
+
+// world (x right, y up, plan view) -> three (x, up, -z)
+const V = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+
+// ---- static world --------------------------------------------------------
+let staticGroup = null;
+let bounds = [10, 10];
+const WALL = {
+  wall:      { h: 0.5,  color: 0xe7ecf3, opacity: 0.95 },
+  furniture: { h: 0.3,  color: 0xf5a623, opacity: 0.9 },
+  border:    { h: 0.25, color: 0x3a4150, opacity: 0.45 },
+};
+const THICK = 0.05;
+
+function disposeGroup(grp) {
+  grp.traverse((o) => {
+    o.geometry?.dispose?.();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) { m.map?.dispose?.(); m.dispose?.(); }
+  });
+  scene.remove(grp);
+}
+
+function buildWorld(hello) {
+  if (staticGroup) disposeGroup(staticGroup);
+  staticGroup = new THREE.Group();
+  const world = hello.world;
+  bounds = world.bounds;
+  const [W, H] = bounds;
+
+  // ground + 1 m grid
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(W, H),
+    new THREE.MeshStandardMaterial({ color: 0x121722, roughness: 1, metalness: 0 }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.set(W / 2, -0.003, -H / 2);
+  staticGroup.add(ground);
+  const gridPts = [];
+  for (let x = 0; x <= W + 1e-9; x += 1) gridPts.push(x, 0.001, 0, x, 0.001, -H);
+  for (let y = 0; y <= H + 1e-9; y += 1) gridPts.push(0, 0.001, -y, W, 0.001, -y);
+  const gridGeo = new THREE.BufferGeometry();
+  gridGeo.setAttribute('position', new THREE.Float32BufferAttribute(gridPts, 3));
+  staticGroup.add(new THREE.LineSegments(gridGeo, new THREE.LineBasicMaterial({ color: 0x232b38 })));
+
+  // app floor image (scan) draped on the ground
+  if (hello.floor?.url) {
+    const [x0, y0, x1, y1] = hello.floor.extent;
+    new THREE.TextureLoader().load(hello.floor.url + '?t=' + Date.now(), (tex) => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(x1 - x0, y1 - y0),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 1, transparent: true, opacity: 0.92 }),
+      );
+      plane.rotation.x = -Math.PI / 2; // local +Y (image top) -> world -Z = plan +y (max y)  ✓
+      plane.position.set((x0 + x1) / 2, 0.002, -(y0 + y1) / 2);
+      staticGroup.add(plane);
+    });
+  }
+
+  // walls as instanced boxes, one InstancedMesh per kind
+  const byKind = new Map();
+  for (const s of world.segments) {
+    const kind = WALL[s.kind] ? s.kind : 'wall';
+    if (!byKind.has(kind)) byKind.set(kind, []);
+    byKind.get(kind).push(s);
+  }
+  const unit = new THREE.BoxGeometry(1, 1, 1);
+  const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  for (const [kind, segs] of byKind) {
+    const spec = WALL[kind];
+    const mat = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.85, metalness: 0.05, transparent: spec.opacity < 1, opacity: spec.opacity });
+    const inst = new THREE.InstancedMesh(unit, mat, segs.length);
+    segs.forEach((s, i) => {
+      const dx = s.x2 - s.x1, dy = s.y2 - s.y1;
+      const L = Math.max(Math.hypot(dx, dy), THICK);
+      const ang = Math.atan2(dy, dx); // rotation about +Y by ang maps +X to (cos, 0, -sin) = plan (cos, sin) ✓
+      pos.set((s.x1 + s.x2) / 2, spec.h / 2, -(s.y1 + s.y2) / 2);
+      quat.setFromAxisAngle(up, ang);
+      scl.set(L, spec.h, THICK);
+      m4.compose(pos, quat, scl);
+      inst.setMatrixAt(i, m4);
+    });
+    inst.instanceMatrix.needsUpdate = true;
+    staticGroup.add(inst);
+  }
+  scene.add(staticGroup);
+
+  // first look: the whole world from the "south"
+  if (!hadWorld) {
+    hadWorld = true;
+    follow = false;
+    $('btnFollow').classList.remove('active');
+    lookAt(new THREE.Vector3(W / 2, 0, -H / 2), Math.max(W, H) * 0.9, 'iso');
+  }
+}
+let hadWorld = false;
+
+// ---- robots, lidar, odometry ------------------------------------------------
+const robots = new Map(); // id -> { group, body, nose, label, mat }
+const bodyGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.19, 28);
+const noseGeo = new THREE.BoxGeometry(0.07, 0.05, 0.05);
+
+function makeLabel(text) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.font = '600 28px ui-monospace, Consolas, monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(11,14,19,0.75)';
+  const w = Math.min(250, ctx.measureText(text).width + 24);
+  ctx.beginPath(); ctx.roundRect((256 - w) / 2, 8, w, 48, 10); ctx.fill();
+  ctx.fillStyle = '#e7ecf3';
+  ctx.fillText(text, 128, 33);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  sprite.scale.set(0.9, 0.225, 1);
+  sprite.position.y = 0.42;
+  return sprite;
+}
+
+function robotEntry(id) {
+  let r = robots.get(id);
+  if (r) return r;
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8b96a8, roughness: 0.6, metalness: 0.1 });
+  const body = new THREE.Mesh(bodyGeo, mat);
+  body.position.y = 0.095;
+  const nose = new THREE.Mesh(noseGeo, new THREE.MeshStandardMaterial({ color: 0xe7ecf3, roughness: 0.5 }));
+  nose.position.set(0.1, 0.2, 0);
+  const group = new THREE.Group();
+  const label = makeLabel(id);
+  group.add(body, nose, label);
+  scene.add(group);
+  r = { group, body, nose, label, mat };
+  robots.set(id, r);
+  return r;
+}
+
+function placeRobot(id, pose, { own = false, collided = false } = {}) {
+  const r = robotEntry(id);
+  r.group.position.set(pose.x, 0, -pose.y);
+  r.group.rotation.y = pose.theta;
+  r.mat.color.setHex(collided ? 0xef4444 : own ? 0x4fd1c5 : 0x8b96a8);
+  r.mat.emissive.setHex(own ? 0x0f3f3b : 0x000000);
+  return r;
+}
+
+// odometry ghost of this viewer's robot
+const ghost = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.11, 0.11, 0.19, 20, 1, true),
+  new THREE.MeshBasicMaterial({ color: 0xc9a227, wireframe: true, transparent: true, opacity: 0.55 }),
+);
+ghost.position.y = 0.095;
+const ghostGroup = new THREE.Group();
+ghostGroup.add(ghost);
+ghostGroup.visible = false;
+scene.add(ghostGroup);
+
+// lidar hits
+const MAX_BEAMS = 1440;
+const scanPos = new Float32Array(MAX_BEAMS * 3);
+const scanGeo = new THREE.BufferGeometry();
+scanGeo.setAttribute('position', new THREE.BufferAttribute(scanPos, 3).setUsage(THREE.DynamicDrawUsage));
+scanGeo.setDrawRange(0, 0);
+const scanPts = new THREE.Points(scanGeo, new THREE.PointsMaterial({ color: 0x22d3ee, size: 0.055, sizeAttenuation: true, transparent: true, opacity: 0.9 }));
+scene.add(scanPts);
+const LIDAR_H = 0.17;
+
+let ownId = null;
+let lastOwn = null;
+function applyFrame(m) {
+  const p = m.groundTruth;
+  const seen = new Set();
+  ownId = m.robotId ?? ownId ?? 'robot';
+  seen.add(ownId);
+  placeRobot(ownId, p, { own: true, collided: m.collided });
+  for (const o of m.others ?? []) {
+    seen.add(o.id);
+    placeRobot(o.id, o, { collided: o.collided });
+  }
+  for (const [id, r] of robots) {
+    if (seen.has(id)) continue;
+    scene.remove(r.group);
+    r.label.material.map.dispose(); r.label.material.dispose(); r.mat.dispose();
+    robots.delete(id);
+  }
+  if (m.odom) {
+    ghostGroup.visible = true;
+    ghostGroup.position.set(m.odom.x, 0, -m.odom.y);
+    ghostGroup.rotation.y = m.odom.theta;
+  }
+  const sc = m.scan;
+  let n = 0;
+  if (sc) {
+    for (let i = 0; i < sc.ranges.length && n < MAX_BEAMS; i++) {
+      const r = sc.ranges[i];
+      if (r >= sc.rangeMax - 1e-6 || r < sc.rangeMin) continue;
+      const a = p.theta + sc.angleMin + i * sc.angleIncrement;
+      scanPos[n * 3] = p.x + r * Math.cos(a);
+      scanPos[n * 3 + 1] = LIDAR_H;
+      scanPos[n * 3 + 2] = -(p.y + r * Math.sin(a));
+      n++;
+    }
+    scanGeo.attributes.position.needsUpdate = true;
+    scanGeo.setDrawRange(0, n);
+  }
+  // follow: move target and camera together so the user's chosen angle is kept
+  const here = V(p.x, p.y, 0.1);
+  if (follow && lastOwn) {
+    const d = here.clone().sub(lastOwn);
+    controls.target.add(d);
+    camera.position.add(d);
+  }
+  lastOwn = here;
+}
+
+// ---- camera presets ----------------------------------------------------------
+let follow = false;
+function lookAt(target, dist, preset) {
+  controls.target.copy(target);
+  const off = preset === 'top' ? new THREE.Vector3(0, dist, 0.0001 * dist) : new THREE.Vector3(0, dist * 0.7, dist * 0.75);
+  camera.position.copy(target).add(off);
+  camera.lookAt(target);
+  controls.update();
+}
+function currentDist() { return camera.position.distanceTo(controls.target); }
+$('btnIso').addEventListener('click', () => lookAt(controls.target.clone(), currentDist(), 'iso'));
+$('btnTop').addEventListener('click', () => lookAt(controls.target.clone(), currentDist(), 'top'));
+$('btnFollow').addEventListener('click', () => {
+  follow = !follow;
+  $('btnFollow').classList.toggle('active', follow);
+  if (follow && lastOwn) lookAt(lastOwn.clone(), Math.min(currentDist(), 5), 'iso');
+});
+
+// ---- loop ---------------------------------------------------------------------
+function fitSize() {
+  const w = canvas.clientWidth || 720;
+  // embedded (pathfinder iframe): fill the window height; standalone: 3:2-ish
+  const embed = document.body.classList.contains('embed');
+  const h = embed
+    ? Math.max(160, Math.floor(innerHeight - canvas.getBoundingClientRect().top - 8))
+    : Math.max(240, Math.round(w * 0.66));
+  const size = renderer.getSize(new THREE.Vector2());
+  if (size.x !== w || size.y !== h) {
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+}
+function tick() {
+  requestAnimationFrame(tick);
+  if (canvas.hidden) return;
+  fitSize();
+  controls.update();
+  renderer.render(scene, camera);
+}
+tick();
+
+window.view3d = { hello: buildWorld, frame: applyFrame };
+if (window.simState.hello) buildWorld(window.simState.hello);
+if (window.simState.latest) applyFrame(window.simState.latest);
 </script>
 </body>
 </html>

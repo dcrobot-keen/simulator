@@ -49,6 +49,9 @@ export function toWorld(slice, { wallsOnly = false, start, name = 'slice' } = {}
     const v = codes[row * cols + c];
     return wallsOnly ? v === SLICE_CODE.OCC_WALL : v === SLICE_CODE.OCC_WALL || v === SLICE_CODE.OCC_FURNITURE;
   };
+  // 'wall' | 'furniture' of the occupied cell that owns an edge -- carried on the segment
+  // (5th element) so the viewers can draw walls and furniture differently (3D heights).
+  const kindOf = (c, row) => (codes[row * cols + c] === SLICE_CODE.OCC_WALL ? 'wall' : 'furniture');
 
   // Exposed unit edges, keyed for collinear-run merging.
   // Horizontal edge on grid line y=row (world y = row*r), spanning col..col+1.
@@ -56,29 +59,33 @@ export function toWorld(slice, { wallsOnly = false, start, name = 'slice' } = {}
   const hEdges = new Map(); // row -> Set of col (edge = segment [col, col+1] along grid line y=row)
   const vEdges = new Map(); // col -> Set of row (edge = segment [row, row+1] along grid line x=col)
 
+  // map key = "<grid line>|<kind>" so runs of different kinds never merge into one segment
   const bucket = (map, k) => { let s = map.get(k); if (!s) map.set(k, (s = new Set())); return s; };
-  const addH = (row, col) => bucket(hEdges, row).add(col);
-  const addV = (col, row) => bucket(vEdges, col).add(row);
+  const addH = (row, col, kind) => bucket(hEdges, `${row}|${kind}`).add(col);
+  const addV = (col, row, kind) => bucket(vEdges, `${col}|${kind}`).add(row);
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       if (!occ(col, row)) continue;
-      if (!occ(col, row - 1)) addH(row, col);       // bottom edge
-      if (!occ(col, row + 1)) addH(row + 1, col);   // top edge
-      if (!occ(col - 1, row)) addV(col, row);       // left edge
-      if (!occ(col + 1, row)) addV(col + 1, row);   // right edge
+      const kind = kindOf(col, row);
+      if (!occ(col, row - 1)) addH(row, col, kind);       // bottom edge
+      if (!occ(col, row + 1)) addH(row + 1, col, kind);   // top edge
+      if (!occ(col - 1, row)) addV(col, row, kind);       // left edge
+      if (!occ(col + 1, row)) addV(col + 1, row, kind);   // right edge
     }
   }
 
   const walls = [];
   const mergeRuns = (map, makeSeg) => {
-    for (const [line, set] of map) {
+    for (const [key, set] of map) {
+      const [lineStr, kind] = key.split('|');
+      const line = Number(lineStr);
       const idxs = [...set].sort((a, b) => a - b);
       let runStart = idxs[0];
       let prev = idxs[0];
       for (let i = 1; i <= idxs.length; i++) {
         if (i < idxs.length && idxs[i] === prev + 1) { prev = idxs[i]; continue; }
-        walls.push(makeSeg(Number(line), runStart, prev + 1));
+        walls.push([...makeSeg(line, runStart, prev + 1), kind]);
         if (i < idxs.length) { runStart = idxs[i]; prev = idxs[i]; }
       }
     }

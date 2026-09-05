@@ -13,12 +13,14 @@ export class World {
     this.start = start && { x: start[0], y: start[1], theta: start[2] ?? 0 };
     const [w, h] = bounds;
     // segments as {x1,y1,x2,y2}; origin at a corner, +x right, +y up
+    // kind: 'border' (outer bounds) | 'wall' | 'furniture' (slicemap worlds tag their edges;
+    // plain world files default to 'wall'). Only the viewers care -- physics treats all alike.
     this.segments = [
-      { x1: 0, y1: 0, x2: w, y2: 0 },
-      { x1: w, y1: 0, x2: w, y2: h },
-      { x1: w, y1: h, x2: 0, y2: h },
-      { x1: 0, y1: h, x2: 0, y2: 0 },
-      ...walls.map(([x1, y1, x2, y2]) => ({ x1, y1, x2, y2 })),
+      { x1: 0, y1: 0, x2: w, y2: 0, kind: 'border' },
+      { x1: w, y1: 0, x2: w, y2: h, kind: 'border' },
+      { x1: w, y1: h, x2: 0, y2: h, kind: 'border' },
+      { x1: 0, y1: h, x2: 0, y2: 0, kind: 'border' },
+      ...walls.map(([x1, y1, x2, y2, kind]) => ({ x1, y1, x2, y2, kind: kind ?? 'wall' })),
     ];
   }
 
