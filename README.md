@@ -30,7 +30,11 @@ npm start            # world "room" 8×6 m; ws 8765 (roboteq) + 8766 (sensors)
 ```
 
 Env: `SIM_WORLD=worlds/<name>.world.json`, `SIM_NOISE=off|low|default|high`,
-`SIM_SEED=<n>` (reproducible noise), `SIM_RWD_MS=300`, `SIM_START="x,y,theta"`
+`SIM_SEED=<n>` (reproducible noise), `SIM_RWD_MS=300`, `SIM_START="x,y,theta"`,
+`SIM_ROBOTS="tb3-sim-01@auto;tb3-sim-02@9.28,9.47,0"` (several robots in ONE world: robot i
+listens on 8765+10i / 8766+10i, `auto` = the world's spawn; they collide with and see each
+other on the LIDAR, so the second robot is a real dynamic obstacle for the first; the viewer
+shows all of them and `GET /robots.json` lists the ports)
 (overrides the world's own start), `SIM_PORT` / `SIM_SENSOR_PORT` /
 `SIM_VIEWER_PORT`.
 

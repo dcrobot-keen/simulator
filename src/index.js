@@ -6,6 +6,10 @@
 //   SIM_SEED=7 node src/index.js            # reproducible noise
 //   SIM_RWD_MS=300 node src/index.js        # fast watchdog for testing
 //   SIM_START="1,1,0" node src/index.js     # start pose, overrides world's
+//   SIM_ROBOTS="tb3-sim-01@auto;tb3-sim-02@9.28,9.47,0" node src/index.js
+//       # several robots in ONE world; robot i listens on 8765+10i / 8766+10i.
+//       # "auto" (or no @pose) = the world's default spawn. They collide with and
+//       # see each other on the LIDAR -- the moving obstacle the nav stack must stop for.
 //
 // Then drive it: open http://127.0.0.1:8767 (viewer), or point
 // robot-os-chromium's dashboard (local mode) at ws://127.0.0.1:8765.
@@ -62,6 +66,21 @@ if (process.env.SIM_START) {
 const noise = resolveNoise(process.env.SIM_NOISE || 'default');
 const seed = Number(process.env.SIM_SEED || 1);
 
-const sim = startSimulator({ world, start, noise, seed, floor });
+// SIM_ROBOTS: "id@x,y,theta;id2@auto;..." -> several robots sharing the world.
+let robots = null;
+if (process.env.SIM_ROBOTS) {
+  robots = process.env.SIM_ROBOTS.split(';').map((entry) => entry.trim()).filter(Boolean).map((entry, i) => {
+    const [id, pose] = entry.split('@');
+    let rs = null;
+    if (pose && pose !== 'auto') {
+      const [x, y, theta] = pose.split(',').map(Number);
+      if ([x, y].some((v) => !Number.isFinite(v))) throw new Error(`SIM_ROBOTS: bad pose in "${entry}"`);
+      rs = { x, y, theta: Number.isFinite(theta) ? theta : 0 };
+    }
+    return { id: id || `robot-${i + 1}`, start: rs ?? (i === 0 ? start : null) };
+  });
+}
+
+const sim = startSimulator({ world, start, robots, noise, seed, floor });
 
 process.on('SIGINT', () => { sim.stop(); process.exit(0); });

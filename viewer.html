@@ -66,6 +66,10 @@ function connectSensors() {
       const m = JSON.parse(line);
       if (m.type === 'hello') {
         world = m.world; lidarSpec = m.lidar;
+        if (m.robotId) $('world').title = `this viewer follows ${m.robotId}`;
+        if (m.robots && m.robots.length > 1) {
+          $('world').textContent = `${world.name} · ${world.bounds[0]}×${world.bounds[1]} m · ${m.robots.length} robots (viewing ${m.robotId})`;
+        }
         if (m.floor && m.floor.url) {
           floorExtent = m.floor.extent;
           const img = new Image();
@@ -81,7 +85,7 @@ function connectSensors() {
           const drift = Math.hypot(p.x - o.x, p.y - o.y);
           $('odom').textContent = `x=${o.x.toFixed(2)}  y=${o.y.toFixed(2)}  θ=${(o.theta * 180 / Math.PI).toFixed(0)}°   (drift ${drift.toFixed(2)} m)`;
         }
-        $('coll').innerHTML = m.collided ? '<span class="off">● touching a wall</span>' : '';
+        $('coll').innerHTML = m.collided ? '<span class="off">● touching a wall / another robot</span>' : '';
       }
     }
   };
@@ -186,8 +190,20 @@ function draw() {
     g.fillRect(X(hx) - 1.5, Y(hy) - 1.5, 3, 3);
   }
 
-  // robot
+  // other robots sharing the world (grey, with their ids)
   const rr = 0.11 * s;
+  for (const o of latest.others ?? []) {
+    g.beginPath(); g.arc(X(o.x), Y(o.y), rr, 0, 2 * Math.PI);
+    g.fillStyle = o.collided ? '#a66' : '#999'; g.fill();
+    g.strokeStyle = '#fff'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(X(o.x), Y(o.y));
+    g.lineTo(X(o.x + 0.18 * Math.cos(o.theta)), Y(o.y + 0.18 * Math.sin(o.theta)));
+    g.stroke();
+    g.fillStyle = '#ddd'; g.font = '11px ui-monospace, monospace';
+    g.fillText(o.id, X(o.x) + rr + 3, Y(o.y) - rr);
+  }
+
+  // this viewer's robot
   g.beginPath(); g.arc(X(p.x), Y(p.y), rr, 0, 2 * Math.PI);
   g.fillStyle = latest.collided ? '#a33' : '#6cf'; g.fill();
   g.strokeStyle = '#fff'; g.lineWidth = 2;
