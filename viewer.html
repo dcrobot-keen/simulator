@@ -485,7 +485,7 @@ function loadMeshes(hello) {
   let done = 0;
   $('meshStat').textContent = `메시 0/${list.length}`;
   for (const m of list) {
-    loader.load(m.url, (gltf) => {
+    loader.load(`${m.url}?v=${m.mtime ?? 0}`, (gltf) => {
       const root = gltf.scene;
       // keep the textured scan mesh, drop the studio's point-cloud layers
       const drop = [];

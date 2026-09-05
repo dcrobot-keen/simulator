@@ -15,7 +15,7 @@
 // robot-os-chromium's dashboard (local mode) at ws://127.0.0.1:8765.
 
 import { readFile, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { World } from './world.js';
 import { parseSlicemap, toWorld } from './slicemap.js';
 import { startSimulator } from './server.js';
@@ -47,6 +47,8 @@ try {
         scan: s.scan, url: `/scans/${s.scan}/overlay.glb`, path: `${dir}/${s.scan}/overlay.glb`,
         offsetX: s.offsetX ?? 0, offsetZ: s.offsetZ ?? 0, yawRadians: s.yawRadians ?? 0,
         origin: raw.origin, // slice-plane coords of the grid corner (= world 0,0)
+        // the viewer appends ?v=<mtime> so a re-exported overlay.glb bypasses the browser cache
+        mtime: Math.floor(statSync(`${dir}/${s.scan}/overlay.glb`).mtimeMs),
       }));
     if (meshes.length === 0) meshes = null;
     console.log(`[sim] scan meshes: ${meshes ? meshes.map((m) => m.scan).join(', ') : `none (looked in ${dir})`}`);
