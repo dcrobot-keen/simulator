@@ -35,6 +35,8 @@
   /* ?embed=1 (pathfinder 시뮬레이션 탭): view only */
   body.embed #wrap { padding: 6px; gap: 6px; }
   body.embed #side, body.embed #legend, body.embed .hint { display: none; }
+  /* ?mode=site (pathfinder 지도 › 3D): 현장 모델만 -- 2D/3D 토글·시점 선택·추적 숨김, 3D 고정 */
+  body.site #btn2d, body.site #btn3d, body.site #robotSel, body.site #btnFollow { display: none; }
 </style>
 </head>
 <body>
@@ -93,6 +95,8 @@ const HOST = location.hostname || '127.0.0.1';
 const params = new URLSearchParams(location.search);
 let wantRobot = params.get('robot');          // follow a specific robot of a multi-robot world
 if (params.get('embed') === '1') document.body.classList.add('embed');
+const SITE_MODE = params.get('mode') === 'site'; // 현장 3D: 3D 고정, 시뮬 전용 컨트롤 숨김
+if (SITE_MODE) document.body.classList.add('site');
 let target = { robotPort: 8765, sensorPort: 8766 };
 window.simState = { hello: null, latest: null };
 
@@ -122,6 +126,7 @@ let initialMode = '2d';
 try { initialMode = localStorage.getItem('simViewerMode') || '2d'; } catch {}
 if (params.get('view') === '3d') initialMode = '3d';
 if (params.get('view') === '2d') initialMode = '2d';
+if (SITE_MODE) initialMode = '3d';
 setMode(initialMode);
 
 // ---- sensor stream --------------------------------------------------------
@@ -485,7 +490,7 @@ function loadMeshes(hello) {
   let done = 0;
   $('meshStat').textContent = `메시 0/${list.length}`;
   for (const m of list) {
-    loader.load(`${m.url}?v=${m.mtime ?? 0}`, (gltf) => {
+    const onLoaded = (gltf) => {
       const root = gltf.scene;
       // keep the textured scan mesh, drop the studio's point-cloud layers
       const drop = [];
@@ -528,7 +533,19 @@ function loadMeshes(hello) {
       done++;
       $('meshStat').textContent = `메시 ${done}/${list.length}`;
       applyWallDim();
-    }, undefined, (err) => {
+    };
+    loader.load(`${m.url}?v=${m.mtime ?? 0}`, onLoaded, undefined, (err) => {
+      // 시뮬레이터 재시작 직후나 브라우저 캐시 쓰기 실패(큰 파일)로 한 번 실패할 수 있다 -- 2초 뒤 한 번 더
+      if (!m._retried) {
+        m._retried = true;
+        $('meshStat').textContent = `메시 재시도: ${m.scan}`;
+        setTimeout(() => loader.load(`${m.url}?v=${m.mtime ?? 0}&retry=1`, onLoaded, undefined, () => {
+          done++;
+          $('meshStat').textContent = `메시 로드 실패: ${m.scan}`;
+          console.error('scan mesh load failed', m, err);
+        }), 2000);
+        return;
+      }
       done++;
       $('meshStat').textContent = `메시 로드 실패: ${m.scan}`;
       console.error('scan mesh load failed', m, err);
